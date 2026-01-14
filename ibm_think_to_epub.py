@@ -100,9 +100,19 @@ class IBMThinkScraper:
         collapsible = li_element.find(
             'span', class_=f'cmp-side-navigation__item--collapsible', recursive=False)
         if collapsible:
-            title = collapsible.get_text(strip=True)
+            # Get the text content, excluding SVG elements and "Caret right" text
+            title_parts = []
+            for element in collapsible.children:
+                if element.name != 'svg':
+                    text = element.get_text(strip=True) if hasattr(
+                        element, 'get_text') else str(element).strip()
+                    # Skip "Caret right" text that appears before actual titles
+                    if text and text != 'Caret right':
+                        title_parts.append(text)
+            title = ' '.join(title_parts).strip()
+
             if title:
-                # Remove the SVG caret icon from title
+                # Remove extra whitespace and clean up
                 title = re.sub(r'\s+', ' ', title).strip()
 
                 # Parse children
@@ -130,6 +140,24 @@ class IBMThinkScraper:
 
         _flatten_recursive(toc_structure)
         return flattened
+
+    def _limit_toc_structure(self, toc_structure: List[Dict], processed_urls: Set[str]) -> List[Dict]:
+        """Create a limited TOC structure containing only processed URLs."""
+        def _limit_recursive(items):
+            result = []
+            for item in items:
+                if item['type'] == 'link':
+                    if item['url'] in processed_urls:
+                        result.append(item)
+                elif item['type'] == 'section' and 'children' in item:
+                    limited_children = _limit_recursive(item['children'])
+                    if limited_children:  # Only include section if it has children
+                        limited_item = item.copy()
+                        limited_item['children'] = limited_children
+                        result.append(limited_item)
+            return result
+
+        return _limit_recursive(toc_structure)
 
     def extract_content(self, soup: BeautifulSoup) -> str:
         """Extract main content from body-article-8 div only."""
@@ -384,7 +412,10 @@ class EPUBGenerator:
         return chapter
 
     def build_toc_from_structure(self, toc_structure: List[Dict], parent_section=None):
-        """Build hierarchical TOC from the parsed structure."""
+        """Build hierarchical TOC from the parsed structure.
+
+        ebooklib expects nested TOC as tuples: (Section, (children...))
+        """
         toc_items = []
 
         for item in toc_structure:
@@ -404,12 +435,12 @@ class EPUBGenerator:
                     item['children'], section_title)
 
                 if children:
+                    # ebooklib expects sections as tuples: (Section, (children...))
                     section = epub.Section(section_title)
-                    section.items = children
-                    toc_items.append(section)
+                    toc_items.append((section, tuple(children)))
                 else:
-                    # Empty section, just add as a link placeholder
-                    toc_items.append(epub.Section(section_title))
+                    # Empty section, skip it
+                    pass
 
         return toc_items
 
@@ -604,6 +635,11 @@ def main(url: str, output: Optional[str], delay: float, max_pages: Optional[int]
     if max_pages is not None and len(toc_items) > max_pages:
         toc_items = toc_items[:max_pages]
         click.echo(f"Limiting to first {max_pages} pages")
+
+        # Create a limited TOC structure that matches the processed pages
+        processed_urls = set(item['url'] for item in toc_items)
+        toc_structure = scraper._limit_toc_structure(
+            toc_structure, processed_urls)
 
     # Initialize EPUB generator
     epub_gen = EPUBGenerator(book_title)
