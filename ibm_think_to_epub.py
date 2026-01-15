@@ -194,11 +194,22 @@ class IBMThinkScraper:
 
         return '\n'.join(content_parts) if content_parts else str(soup.find('body') or '')
 
-    def clean_links(self, soup: BeautifulSoup) -> BeautifulSoup:
-        """Remove or fix problematic links."""
+    def clean_links(self, soup: BeautifulSoup, chapter_map: Dict[str, epub.EpubHtml] = None) -> BeautifulSoup:
+        """Remove or fix problematic links, and rewrite internal links to point within the EPUB."""
         # Remove links that point to missing resources or external sites
         for link in soup.find_all('a', href=True):
             href = link.get('href', '')
+            original_href = href
+
+            # Handle absolute URLs that might be internal to IBM Think
+            if href.startswith('http') and 'ibm.com/think' in href:
+                # This is an internal IBM Think link - check if we have it in our chapter map
+                if chapter_map and href in chapter_map:
+                    # Rewrite to point to the EPUB chapter
+                    chapter = chapter_map[href]
+                    link['href'] = chapter.file_name
+                    continue
+
             # Remove links to missing resources or external non-http links
             if href.startswith('javascript:') or \
                href.startswith('mailto:') or \
@@ -627,13 +638,6 @@ class EPUBGenerator:
             cover_bytes = output.getvalue()
 
             # Add cover to EPUB
-            cover_item = epub.EpubItem(
-                uid="cover",
-                file_name="cover.png",
-                media_type="image/png",
-                content=cover_bytes
-            )
-            self.book.add_item(cover_item)
             self.book.set_cover("cover.png", cover_bytes)
 
             print(f"✓ Generated cover image for: {title}")
@@ -824,6 +828,15 @@ def main(url: str, output: Optional[str], delay: float, max_pages: Optional[int]
             img_data['content'],
             img_data['media_type']
         )
+
+    # Rewrite internal links to point within the EPUB
+    click.echo("Rewriting internal links...")
+    for chapter in epub_gen.chapters:
+        if hasattr(chapter, 'content') and chapter.content:
+            content_soup = BeautifulSoup(chapter.content, 'lxml')
+            content_soup = scraper.clean_links(
+                content_soup, epub_gen.chapter_map)
+            chapter.content = str(content_soup)
 
     # Finalize and write EPUB
     click.echo("Finalizing EPUB...")
