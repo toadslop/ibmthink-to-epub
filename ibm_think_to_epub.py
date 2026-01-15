@@ -14,6 +14,7 @@ import time
 import hashlib
 from io import BytesIO
 from typing import List, Dict, Optional, Set, Tuple
+from html2image import Html2Image
 
 
 class IBMThinkScraper:
@@ -547,6 +548,99 @@ class EPUBGenerator:
         self.book.add_item(img)
         return img
 
+    def add_cover(self, title: str, logo_path: str = "ibm-logo.png"):
+        """Generate and add a cover image to the EPUB."""
+        import os
+        from PIL import Image
+        import io
+
+        try:
+            # Check if logo exists
+            if not os.path.exists(logo_path):
+                print(
+                    f"Warning: Logo file {logo_path} not found, skipping cover generation")
+                return
+
+            # Create HTML for the cover
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body {{
+                        margin: 0;
+                        padding: 40px;
+                        background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+                        font-family: Arial, sans-serif;
+                        display: flex;
+                        flex-direction: column;
+                        justify-content: center;
+                        align-items: center;
+                        height: calc(100vh - 80px);
+                        text-align: center;
+                    }}
+                    .logo {{
+                        max-width: 200px;
+                        max-height: 200px;
+                        margin-bottom: 40px;
+                    }}
+                    .title {{
+                        font-size: 36px;
+                        font-weight: bold;
+                        color: #1f2937;
+                        line-height: 1.2;
+                        max-width: 600px;
+                        margin: 0;
+                    }}
+                </style>
+            </head>
+            <body>
+                <img src="file://{os.path.abspath(logo_path)}" class="logo" alt="IBM Logo">
+                <h1 class="title">{title}</h1>
+            </body>
+            </html>
+            """
+
+            # Convert HTML to PNG using html2image
+            hti = Html2Image()
+            hti.size = (800, 1200)
+            screenshot_path = hti.screenshot(
+                html_str=html_content, save_as='cover_temp.png')[0]
+
+            # Read the screenshot
+            with open(screenshot_path, 'rb') as f:
+                screenshot = f.read()
+
+            # Clean up temp file
+            os.unlink(screenshot_path)
+
+            # Convert to PIL Image and resize if needed
+            img = Image.open(io.BytesIO(screenshot))
+
+            # Resize to standard cover size (keeping aspect ratio)
+            max_width, max_height = 600, 800
+            img.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+
+            # Convert back to bytes
+            output = io.BytesIO()
+            img.save(output, format='PNG')
+            cover_bytes = output.getvalue()
+
+            # Add cover to EPUB
+            cover_item = epub.EpubItem(
+                uid="cover",
+                file_name="cover.png",
+                media_type="image/png",
+                content=cover_bytes
+            )
+            self.book.add_item(cover_item)
+            self.book.set_cover("cover.png", cover_bytes)
+
+            print(f"✓ Generated cover image for: {title}")
+
+        except Exception as e:
+            print(f"Warning: Failed to generate cover image: {e}")
+
     def finalize(self, toc_structure: List[Dict] = None):
         """Finalize the EPUB book structure."""
         # Build hierarchical TOC if structure provided
@@ -654,6 +748,10 @@ def main(url: str, output: Optional[str], delay: float, max_pages: Optional[int]
 
     # Initialize EPUB generator
     epub_gen = EPUBGenerator(book_title)
+
+    # Generate and add cover
+    click.echo("Generating cover page...")
+    epub_gen.add_cover(book_title)
 
     # Add header pages for top-level sections that don't have links
     header_chapters = []
