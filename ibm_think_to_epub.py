@@ -467,6 +467,28 @@ class EPUBGenerator:
 
         return toc_items
 
+    def _order_chapters_for_spine(self, toc_structure):
+        """Order chapters to match the nav TOC structure for proper spine order."""
+        ordered_chapters = []
+        chapter_map = {chapter.file_name: chapter for chapter in self.chapters}
+
+        def _extract_chapters_from_toc(toc_items):
+            for item in toc_items:
+                if isinstance(item, epub.EpubHtml):
+                    # This is a chapter
+                    if item.file_name in chapter_map:
+                        ordered_chapters.append(chapter_map[item.file_name])
+                elif isinstance(item, tuple) and len(item) == 2:
+                    # This is a section with children: (section, children)
+                    section, children = item
+                    if hasattr(section, 'file_name') and section.file_name in chapter_map:
+                        ordered_chapters.append(chapter_map[section.file_name])
+                    # Recursively process children
+                    _extract_chapters_from_toc(children)
+
+        _extract_chapters_from_toc(toc_structure)
+        return ordered_chapters
+
     def add_css(self):
         """Add CSS styling."""
         # Base CSS with improved code block styling
@@ -665,8 +687,13 @@ class EPUBGenerator:
         for chapter in self.chapters:
             chapter.add_item(css)
 
-        # Define spine (reading order)
-        self.book.spine = ['nav'] + self.chapters
+        # Reorder chapters to match nav TOC order for proper spine
+        if toc_structure:
+            ordered_chapters = self._order_chapters_for_spine(self.book.toc)
+            self.book.spine = ['nav'] + ordered_chapters
+        else:
+            # Define spine (reading order)
+            self.book.spine = ['nav'] + self.chapters
 
     def write(self, output_path: str):
         """Write the EPUB file."""
