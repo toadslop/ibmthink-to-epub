@@ -435,9 +435,20 @@ class EPUBGenerator:
                     item['children'], section_title)
 
                 if children:
-                    # ebooklib expects sections as tuples: (Section, (children...))
-                    section = epub.Section(section_title)
-                    toc_items.append((section, tuple(children)))
+                    # Check if this section has its own chapter (header page)
+                    section_chapter = None
+                    for chapter in self.chapters:
+                        if chapter.title == section_title and chapter.file_name.startswith('section_'):
+                            section_chapter = chapter
+                            break
+
+                    if section_chapter:
+                        # Section has a header page, include it as the first child
+                        toc_items.append((section_chapter, tuple(children)))
+                    else:
+                        # ebooklib expects sections as tuples: (Section, (children...))
+                        section = epub.Section(section_title)
+                        toc_items.append((section, tuple(children)))
                 else:
                     # Empty section, skip it
                     pass
@@ -643,6 +654,30 @@ def main(url: str, output: Optional[str], delay: float, max_pages: Optional[int]
 
     # Initialize EPUB generator
     epub_gen = EPUBGenerator(book_title)
+
+    # Add header pages for top-level sections that don't have links
+    header_chapters = []
+    for item in toc_structure:
+        if item['type'] == 'section' and item.get('level', 0) == 0:
+            # Check if this top-level section has a corresponding page in processed pages
+            section_has_page = any(link_item['title'] == item['title']
+                                   for link_item in toc_items if link_item['type'] == 'link')
+
+            if not section_has_page:
+                # Create a header page for this section
+                header_filename = f'section_{len(header_chapters) + 1:03d}.xhtml'
+
+                # Create chapter with empty content first
+                header_chapter = epub_gen.add_chapter(
+                    item['title'], '', header_filename,
+                    f'#{item["title"].lower().replace(" ", "_")}')
+
+                # Override content with centered h1
+                header_chapter.content = f'''<div style="display: flex; justify-content: center; align-items: center; height: 100vh; text-align: center;">
+    <h1 style="font-size: 2em; margin: 0;">{item["title"]}</h1>
+</div>'''
+                header_chapters.append(header_chapter)
+                click.echo(f"Added section header: {item['title']}")
 
     # Process each page in the TOC
     for idx, item in enumerate(toc_items, 1):
