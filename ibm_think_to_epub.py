@@ -303,6 +303,33 @@ class IBMThinkScraper:
 
     def clean_html(self, html: str) -> str:
         """Clean and normalize HTML content for EPUB compliance."""
+        # First, normalize mathematical Unicode characters that e-readers don't support
+        # Replace Mathematical Alphanumeric Symbols with regular equivalents
+        math_char_map = {
+            # Mathematical Italic lowercase letters (U+1D44E to U+1D467)
+            '𝑎': 'a', '𝑏': 'b', '𝑐': 'c', '𝑑': 'd', '𝑒': 'e', '𝑓': 'f', '𝑔': 'g', '𝒉': 'h',
+            '𝑖': 'i', '𝑗': 'j', '𝑘': 'k', '𝑙': 'l', '𝑚': 'm', '𝑛': 'n', '𝑜': 'o', '𝑝': 'p',
+            '𝑞': 'q', '𝑟': 'r', '𝑠': 's', '𝑡': 't', '𝑢': 'u', '𝑣': 'v', '𝑤': 'w', '𝑥': 'x',
+            '𝑦': 'y', '𝑧': 'z',
+            # Mathematical Italic uppercase letters (U+1D434 to U+1D44D)
+            '𝐴': 'A', '𝐵': 'B', '𝐶': 'C', '𝐷': 'D', '𝐸': 'E', '𝐹': 'F', '𝐺': 'G', '𝐻': 'H',
+            '𝐼': 'I', '𝐽': 'J', '𝐾': 'K', '𝐿': 'L', '𝑀': 'M', '𝑁': 'N', '𝑂': 'O', '𝑃': 'P',
+            '𝑄': 'Q', '𝑅': 'R', '𝑆': 'S', '𝑇': 'T', '𝑈': 'U', '𝑉': 'V', '𝑊': 'W', '𝑋': 'X',
+            '𝑌': 'Y', '𝑍': 'Z',
+            # Mathematical Italic Greek letters (U+1D6FC to U+1D71B)
+            '𝛼': 'α', '𝛽': 'β', '𝛾': 'γ', '𝛿': 'δ', '𝜀': 'ε', '𝜁': 'ζ', '𝜂': 'η', '𝜃': 'θ',
+            '𝜄': 'ι', '𝜅': 'κ', '𝜆': 'λ', '𝜇': 'μ', '𝜈': 'ν', '𝜉': 'ξ', '𝜋': 'π', '𝜌': 'ρ',
+            '𝜎': 'σ', '𝜏': 'τ', '𝜐': 'υ', '𝜑': 'φ', '𝜒': 'χ', '𝜓': 'ψ', '𝜔': 'ω',
+            # Mathematical Bold lowercase letters
+            '𝐚': 'a', '𝐛': 'b', '𝐜': 'c', '𝐝': 'd', '𝐞': 'e', '𝐟': 'f', '𝐠': 'g', '𝐡': 'h',
+            '𝐢': 'i', '𝐣': 'j', '𝐤': 'k', '𝐥': 'l', '𝐦': 'm', '𝐧': 'n', '𝐨': 'o', '𝐩': 'p',
+            '𝐪': 'q', '𝐫': 'r', '𝐬': 's', '𝐭': 't', '𝐮': 'u', '𝐯': 'v', '𝐰': 'w', '𝐱': 'x',
+            '𝐲': 'y', '𝐳': 'z',
+        }
+        
+        for math_char, regular_char in math_char_map.items():
+            html = html.replace(math_char, regular_char)
+        
         soup = BeautifulSoup(html, 'lxml')
 
         # Remove SVG elements entirely (they cause validation issues)
@@ -314,7 +341,7 @@ class IBMThinkScraper:
             # Ensure math elements have the proper MathML namespace
             if not math_elem.get('xmlns'):
                 math_elem['xmlns'] = 'http://www.w3.org/1998/Math/MathML'
-            
+
             # Remove any empty or malformed MathML child elements
             for child in math_elem.find_all():
                 # Remove elements that are empty and have no attributes
@@ -325,15 +352,15 @@ class IBMThinkScraper:
                     # If element is empty, remove it
                     if not child.get_text(strip=True):
                         child.decompose()
-        
+
         # Remove iframes and embedded content (not allowed in EPUB)
         for iframe in soup.find_all('iframe'):
             iframe.decompose()
-        
+
         # Remove video and audio elements with remote sources
         for media in soup.find_all(['video', 'audio']):
             media.decompose()
-        
+
         # Remove script tags
         for script in soup.find_all('script'):
             script.decompose()
@@ -394,13 +421,13 @@ class IBMThinkScraper:
                (src and '%' in src and not src.startswith('http')):
                 img.decompose()
                 continue
-        
+
         # Remove links to external stylesheets (remote resources)
         for link in soup.find_all('link', href=True):
             href = link.get('href', '')
             if href.startswith('http://') or href.startswith('https://') or href.startswith('//'):
                 link.decompose()
-        
+
         # Remove elements with src/href pointing to remote resources
         for tag in soup.find_all(attrs={'src': True}):
             src = tag.get('src', '')
@@ -446,7 +473,7 @@ class IBMThinkScraper:
             'data-cmp-aspectratio', 'data-cmp-aspectratio-max', 'data-cmp-aspectratio-xl',
             'data-cmp-aspectratio-md', 'data-cmp-aspectratio-lg', 'data-cmp-aspectratio-sm'
         ]
-        
+
         for tag in soup.find_all(True):
             # Remove invalid attributes
             for attr in list(tag.attrs.keys()):
