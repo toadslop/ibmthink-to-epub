@@ -326,10 +326,10 @@ class IBMThinkScraper:
             '𝐪': 'q', '𝐫': 'r', '𝐬': 's', '𝐭': 't', '𝐮': 'u', '𝐯': 'v', '𝐰': 'w', '𝐱': 'x',
             '𝐲': 'y', '𝐳': 'z',
         }
-        
+
         for math_char, regular_char in math_char_map.items():
             html = html.replace(math_char, regular_char)
-        
+
         soup = BeautifulSoup(html, 'lxml')
 
         # Remove SVG elements entirely (they cause validation issues)
