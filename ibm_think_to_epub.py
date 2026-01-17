@@ -225,37 +225,53 @@ class IBMThinkScraper:
 
         return soup
 
-    def download_image(self, img_url: str) -> Optional[Tuple[bytes, str]]:
+    def download_image(self, img_url: str, max_retries: int = 3) -> Optional[Tuple[bytes, str]]:
         """Download an image and return its content and extension."""
-        try:
-            response = self.session.get(img_url, timeout=10)
-            response.raise_for_status()
+        for attempt in range(max_retries):
+            try:
+                # Use longer timeout for large images and add streaming
+                response = self.session.get(img_url, timeout=30, stream=True)
+                response.raise_for_status()
 
-            # Determine image type from content-type or URL
-            content_type = response.headers.get('content-type', '')
-            if 'image/jpeg' in content_type or img_url.endswith(('.jpg', '.jpeg')):
-                ext = 'jpg'
-                media_type = 'image/jpeg'
-            elif 'image/png' in content_type or img_url.endswith('.png'):
-                ext = 'png'
-                media_type = 'image/png'
-            elif 'image/gif' in content_type or img_url.endswith('.gif'):
-                ext = 'gif'
-                media_type = 'image/gif'
-            elif 'image/svg' in content_type or img_url.endswith('.svg'):
-                ext = 'svg'
-                media_type = 'image/svg+xml'
-            elif 'image/webp' in content_type or img_url.endswith('.webp'):
-                ext = 'webp'
-                media_type = 'image/webp'
-            else:
-                ext = 'jpg'  # default
-                media_type = 'image/jpeg'
+                # Read content in chunks to avoid timeout on large files
+                content = b''
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        content += chunk
 
-            return response.content, ext, media_type
-        except Exception as e:
-            print(f"  Warning: Failed to download image {img_url}: {e}")
-            return None
+                # Determine image type from content-type or URL
+                content_type = response.headers.get('content-type', '')
+                if 'image/jpeg' in content_type or img_url.endswith(('.jpg', '.jpeg')):
+                    ext = 'jpg'
+                    media_type = 'image/jpeg'
+                elif 'image/png' in content_type or img_url.endswith('.png'):
+                    ext = 'png'
+                    media_type = 'image/png'
+                elif 'image/gif' in content_type or img_url.endswith('.gif'):
+                    ext = 'gif'
+                    media_type = 'image/gif'
+                elif 'image/svg' in content_type or img_url.endswith('.svg'):
+                    ext = 'svg'
+                    media_type = 'image/svg+xml'
+                elif 'image/webp' in content_type or img_url.endswith('.webp'):
+                    ext = 'webp'
+                    media_type = 'image/webp'
+                else:
+                    ext = 'jpg'  # default
+                    media_type = 'image/jpeg'
+
+                return content, ext, media_type
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(
+                        f"  Retry {attempt + 1}/{max_retries} for image {img_url}")
+                    time.sleep(2)  # Wait before retrying
+                else:
+                    print(
+                        f"  Warning: Failed to download image after {max_retries} attempts {img_url}: {e}")
+                    return None
+
+        return None
 
     def process_images(self, soup: BeautifulSoup) -> BeautifulSoup:
         """Download images and update their src attributes."""
@@ -266,6 +282,29 @@ class IBMThinkScraper:
 
             # Make absolute URL
             img_url = urljoin(self.base_url, src)
+
+            # For IBM assets, modify URL parameters to get higher resolution
+            if 'assets.ibm.com' in img_url or 'ibm.com/is/image' in img_url:
+                # Remove or modify limiting parameters and add high-res parameters
+                from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+                parsed = urlparse(img_url)
+                params = parse_qs(parsed.query)
+
+                # Remove low-res limiting parameters
+                params.pop('wid', None)  # Remove width limit
+                params.pop('hei', None)  # Remove height limit
+                params.pop('fit', None)  # Remove fit constraints
+
+                # Add high-resolution parameters
+                # Request higher width (reasonable for e-readers)
+                params['wid'] = ['2048']
+                params['qlt'] = ['95']     # High quality (95%)
+                params['fmt'] = ['png-alpha']  # PNG format with transparency
+
+                # Reconstruct URL with new parameters
+                new_query = urlencode(params, doseq=True)
+                img_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path,
+                                     parsed.params, new_query, parsed.fragment))
 
             # Skip if already downloaded
             if img_url in self.downloaded_images:
@@ -298,6 +337,18 @@ class IBMThinkScraper:
                 # Remove loading attribute (not well-supported in EPUB readers)
                 if img.has_attr('loading'):
                     del img['loading']
+                # Remove hardcoded width and height (let CSS control sizing)
+                if img.has_attr('width'):
+                    del img['width']
+                if img.has_attr('height'):
+                    del img['height']
+                # Remove inline styles that might constrain size
+                if img.has_attr('style'):
+                    del img['style']
+                # Remove any max-width/max-height attributes
+                for attr in ['max-width', 'max-height', 'min-width', 'min-height']:
+                    if img.has_attr(attr):
+                        del img[attr]
 
         return soup
 
@@ -483,6 +534,15 @@ class IBMThinkScraper:
                 # Remove any data-* attributes that start with specific prefixes
                 elif attr.startswith('data-cmp') or attr.startswith('data-asset'):
                     del tag[attr]
+        
+        # Remove inline styles from image containers that might constrain size
+        for container in soup.find_all(['div', 'figure', 'span'], class_=lambda x: x and any(cls in str(x) for cls in ['image', 'cmp-image', 'figure'])):
+            if container.has_attr('style'):
+                del container['style']
+            # Remove width/height attributes from containers
+            for attr in ['width', 'height', 'max-width', 'max-height']:
+                if container.has_attr(attr):
+                    del container[attr]
 
         return str(soup)
 
@@ -615,9 +675,17 @@ class EPUBGenerator:
         }
         img {
             max-width: 100%;
+            width: 100%;
             height: auto;
             display: block;
             margin: 1em auto;
+            object-fit: contain;
+        }
+        /* Ensure parent containers don't constrain image width */
+        div.image, div.image-dm, .cmp-image {
+            max-width: 100%;
+            width: 100%;
+            margin: 1em 0;
         }
         code {
             font-family: 'Courier New', 'Consolas', 'Monaco', monospace;
@@ -740,7 +808,14 @@ class EPUBGenerator:
             """
 
             # Convert HTML to PNG using html2image
-            hti = Html2Image()
+            hti = Html2Image(
+                custom_flags=[
+                    '--disable-gpu',
+                    '--no-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-software-rasterizer'
+                ]
+            )
             hti.size = (800, 1200)
             screenshot_path = hti.screenshot(
                 html_str=html_content, save_as='cover_temp.png')[0]
