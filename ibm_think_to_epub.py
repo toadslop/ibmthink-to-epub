@@ -309,9 +309,11 @@ class IBMThinkScraper:
         for svg in soup.find_all('svg'):
             svg.decompose()
 
-        # Handle MathML elements - remove them as they cause EPUB validation issues
+        # Handle MathML elements - add proper namespace for EPUB3 compatibility
         for math_elem in soup.find_all('math'):
-            math_elem.decompose()
+            # Ensure math elements have the proper MathML namespace
+            if not math_elem.get('xmlns'):
+                math_elem['xmlns'] = 'http://www.w3.org/1998/Math/MathML'
 
         # Convert cds-code-snippet elements to proper code elements
         for code_snippet in soup.find_all('cds-code-snippet'):
