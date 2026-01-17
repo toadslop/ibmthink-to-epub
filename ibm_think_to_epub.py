@@ -342,6 +342,21 @@ class IBMThinkScraper:
             if table.has_attr('border'):
                 del table['border']
 
+        # Remove <picture> wrappers and <source> tags that interfere with EPUB rendering
+        # EPUB readers often don't handle <picture> elements well, especially with placeholder data URIs
+        for picture in soup.find_all('picture'):
+            # Find the img tag inside the picture element
+            img = picture.find('img')
+            if img:
+                # Remove all source tags
+                for source in picture.find_all('source'):
+                    source.decompose()
+                # Replace the picture element with just the img tag
+                picture.replace_with(img)
+            else:
+                # No img tag found, remove the entire picture element
+                picture.decompose()
+
         # Fix invalid image src attributes (remove data URIs and invalid URLs)
         for img in soup.find_all('img'):
             src = img.get('src', '')
