@@ -314,6 +314,29 @@ class IBMThinkScraper:
             # Ensure math elements have the proper MathML namespace
             if not math_elem.get('xmlns'):
                 math_elem['xmlns'] = 'http://www.w3.org/1998/Math/MathML'
+            
+            # Remove any empty or malformed MathML child elements
+            for child in math_elem.find_all():
+                # Remove elements that are empty and have no attributes
+                if not child.get_text(strip=True) and not child.attrs:
+                    child.decompose()
+                # Wrap bare text nodes in MathML elements with proper tags
+                elif child.name and not child.find_all():
+                    # If element is empty, remove it
+                    if not child.get_text(strip=True):
+                        child.decompose()
+        
+        # Remove iframes and embedded content (not allowed in EPUB)
+        for iframe in soup.find_all('iframe'):
+            iframe.decompose()
+        
+        # Remove video and audio elements with remote sources
+        for media in soup.find_all(['video', 'audio']):
+            media.decompose()
+        
+        # Remove script tags
+        for script in soup.find_all('script'):
+            script.decompose()
 
         # Convert cds-code-snippet elements to proper code elements
         for code_snippet in soup.find_all('cds-code-snippet'):
@@ -359,13 +382,30 @@ class IBMThinkScraper:
                 # No img tag found, remove the entire picture element
                 picture.decompose()
 
-        # Fix invalid image src attributes (remove data URIs and invalid URLs)
+        # Fix invalid image src attributes (remove data URIs, invalid URLs, and remote resources)
         for img in soup.find_all('img'):
             src = img.get('src', '')
-            # Remove images with data URIs or invalid URLs containing unescaped %
-            if src.startswith('data:') or '%%' in src or (src and '%' in src and not src.startswith('http')):
+            # Remove images with data URIs, invalid URLs, or external HTTP/HTTPS references
+            if src.startswith('data:') or \
+               src.startswith('http://') or \
+               src.startswith('https://') or \
+               src.startswith('//') or \
+               '%%' in src or \
+               (src and '%' in src and not src.startswith('http')):
                 img.decompose()
                 continue
+        
+        # Remove links to external stylesheets (remote resources)
+        for link in soup.find_all('link', href=True):
+            href = link.get('href', '')
+            if href.startswith('http://') or href.startswith('https://') or href.startswith('//'):
+                link.decompose()
+        
+        # Remove elements with src/href pointing to remote resources
+        for tag in soup.find_all(attrs={'src': True}):
+            src = tag.get('src', '')
+            if src.startswith('http://') or src.startswith('https://') or src.startswith('//'):
+                tag.decompose()
 
         # Fix nested heading issues
         # 1. First, unwrap headings that are nested within other headings
@@ -399,13 +439,23 @@ class IBMThinkScraper:
                 tag.decompose()
 
         # Remove elements with invalid attributes
+        invalid_attrs = [
+            'slot', 'viewbox', 'driverlocation', 'cta-type', 'icon-placement',
+            'data-cmp-hook-image', 'data-cmp-is', 'data-cmp-widths', 'data-cmp-dmimage',
+            'data-cmp-src', 'data-asset-id', 'data-cmp-filereference', 'data-cmp-data-layer',
+            'data-cmp-aspectratio', 'data-cmp-aspectratio-max', 'data-cmp-aspectratio-xl',
+            'data-cmp-aspectratio-md', 'data-cmp-aspectratio-lg', 'data-cmp-aspectratio-sm'
+        ]
+        
         for tag in soup.find_all(True):
-            # Remove 'slot' attribute (not allowed in EPUB)
-            if tag.has_attr('slot'):
-                del tag['slot']
-            # Fix viewbox -> viewBox (though we're removing SVGs anyway)
-            if tag.has_attr('viewbox'):
-                del tag['viewbox']
+            # Remove invalid attributes
+            for attr in list(tag.attrs.keys()):
+                # Remove specific invalid attributes
+                if attr in invalid_attrs:
+                    del tag[attr]
+                # Remove any data-* attributes that start with specific prefixes
+                elif attr.startswith('data-cmp') or attr.startswith('data-asset'):
+                    del tag[attr]
 
         return str(soup)
 
