@@ -431,6 +431,17 @@ class EPUBGenerator:
         )
         chapter.content = f'<h1>{title}</h1>\n{content}'
 
+        # Check if the content contains MathML and set the property if it does
+        if '<math' in content:
+            chapter.add_item(epub.EpubItem(
+                uid='mathml',
+                file_name='',
+                media_type='',
+                content=''
+            ))
+            # Set the mathml property in the chapter's properties
+            chapter.properties.append('mathml')
+
         self.book.add_item(chapter)
         self.chapters.append(chapter)
 
